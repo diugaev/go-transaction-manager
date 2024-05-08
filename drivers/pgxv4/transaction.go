@@ -2,6 +2,7 @@ package pgxv4
 
 import (
 	"context"
+	"sync"
 
 	"github.com/jackc/pgx/v4"
 
@@ -11,6 +12,7 @@ import (
 
 // Transaction is trm.Transaction for pgx.Tx.
 type Transaction struct {
+	mu       sync.Mutex
 	tx       pgx.Tx
 	isClosed *drivers.IsClosed
 }
@@ -27,6 +29,7 @@ func NewTransaction(
 	}
 
 	tr := &Transaction{
+		mu:       sync.Mutex{},
 		tx:       tx,
 		isClosed: drivers.NewIsClosed(),
 	}
@@ -43,7 +46,7 @@ func (t *Transaction) awaitDone(ctx context.Context) {
 
 	select {
 	case <-ctx.Done():
-		t.isClosed.Close()
+		_ = t.Rollback(ctx)
 	case <-t.isClosed.Closed():
 	}
 }
@@ -61,6 +64,7 @@ func (t *Transaction) Begin(ctx context.Context, _ trm.Settings) (context.Contex
 	}
 
 	tr := &Transaction{
+		mu:       sync.Mutex{},
 		tx:       tx,
 		isClosed: drivers.NewIsClosed(),
 	}
@@ -70,14 +74,18 @@ func (t *Transaction) Begin(ctx context.Context, _ trm.Settings) (context.Contex
 
 // Commit the trm.Transaction.
 func (t *Transaction) Commit(ctx context.Context) error {
+	t.mu.Lock()
 	defer t.isClosed.Close()
+	defer t.mu.Unlock()
 
 	return t.tx.Commit(ctx)
 }
 
 // Rollback the trm.Transaction.
 func (t *Transaction) Rollback(ctx context.Context) error {
+	t.mu.Lock()
 	defer t.isClosed.Close()
+	defer t.mu.Unlock()
 
 	return t.tx.Rollback(ctx)
 }
